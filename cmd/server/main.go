@@ -7,12 +7,16 @@ import (
 	"syscall"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/sushiqiren/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/sushiqiren/learn-pub-sub-starter/internal/pubsub"
 	"github.com/sushiqiren/learn-pub-sub-starter/internal/routing"
 )
 
 func main() {
 	fmt.Println("Starting Peril server...")
+
+	// Display the available commands
+	gamelogic.PrintServerHelp()
 
 	// Declare the connection string
 	connStr := "amqp://guest:guest@localhost:5672/"
@@ -48,12 +52,62 @@ func main() {
 	}
 	fmt.Println("Successfully published pause message to exchange")
 
-	// Wait for a signal to exit
+	// Set up signal handling in a separate goroutine
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 
-	fmt.Println("Waiting for shutdown signal...")
-	<-signalChan
+	go func() {
+		<-signalChan
+		fmt.Println("\nShutdown signal received. Closing connection...")
+		os.Exit(0)
+	}()
 
-	fmt.Println("Shutdown signal received. Closing connection...")
+	// Start the input loop
+	fmt.Println("Server is ready. Enter commands:")
+	for {
+		// Get input from the user
+		words := gamelogic.GetInput()
+
+		// If no input, continue the loop
+		if len(words) == 0 {
+			continue
+		}
+
+		// Process the command
+		command := words[0]
+
+		switch command {
+		case "help":
+			gamelogic.PrintServerHelp()
+		case "quit":
+			gamelogic.PrintQuit()
+			fmt.Println("Shutting down server...")
+			return
+		case "pause":
+			fmt.Println("Pausing game...")
+			pauseMessage := routing.PlayingState{
+				IsPaused: true,
+			}
+			err = pubsub.PublishJSON(ch, routing.ExchangePerilDirect, routing.PauseKey, pauseMessage)
+			if err != nil {
+				fmt.Printf("Failed to publish pause message: %v\n", err)
+			} else {
+				fmt.Println("Game paused successfully")
+			}
+		case "resume":
+			fmt.Println("Resuming game...")
+			resumeMessage := routing.PlayingState{
+				IsPaused: false,
+			}
+			err = pubsub.PublishJSON(ch, routing.ExchangePerilDirect, routing.PauseKey, resumeMessage)
+			if err != nil {
+				fmt.Printf("Failed to publish resume message: %v\n", err)
+			} else {
+				fmt.Println("Game resumed successfully")
+			}
+		default:
+			fmt.Printf("Unknown command: %s\n", command)
+			gamelogic.PrintServerHelp()
+		}
+	}
 }
