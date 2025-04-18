@@ -2,62 +2,77 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
+	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/sushiqiren/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/sushiqiren/learn-pub-sub-starter/internal/pubsub"
 	"github.com/sushiqiren/learn-pub-sub-starter/internal/routing"
+	
 )
 
 func main() {
 	fmt.Println("Starting Peril client...")
+	const rabbitConnString = "amqp://guest:guest@localhost:5672/"
 
-	// Get the username using the ClientWelcome function
-	username, err := gamelogic.ClientWelcome()
+	conn, err := amqp.Dial(rabbitConnString)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-
-	// Declare the connection string
-	connStr := "amqp://guest:guest@localhost:5672/"
-
-	// Connect to RabbitMQ
-	conn, err := amqp.Dial(connStr)
-	if err != nil {
-		fmt.Printf("Failed to connect to RabbitMQ: %v\n", err)
-		return
+		log.Fatalf("could not connect to RabbitMQ: %v", err)
 	}
 	defer conn.Close()
-	fmt.Println("Successfully connected to RabbitMQ")
+	fmt.Println("Peril game client connected to RabbitMQ!")
 
-	// Create a queue name with format: pause.username
-	queueName := routing.PauseKey + "." + username
+	username, err := gamelogic.ClientWelcome()
+	if err != nil {
+		log.Fatalf("could not get username: %v", err)
+	}
 
-	// Declare and bind a queue to the exchange
-	ch, q, err := pubsub.DeclareAndBind(
+	_, queue, err := pubsub.DeclareAndBind(
 		conn,
 		routing.ExchangePerilDirect,
-		queueName,
+		routing.PauseKey+"."+username,
 		routing.PauseKey,
 		pubsub.QueueTransient,
 	)
 	if err != nil {
-		fmt.Printf("Failed to declare and bind queue: %v\n", err)
-		return
+		log.Fatalf("could not subscribe to pause: %v", err)
 	}
-	defer ch.Close()
-	fmt.Printf("Successfully declared queue '%s' and bound to exchange for user: %s\n", q.Name, username)
+	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
 
-	// Wait for a signal to exit
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+	gs := gamelogic.NewGameState(username)
 
-	fmt.Println("Waiting for shutdown signal...")
-	<-signalChan
+	for {
+		words := gamelogic.GetInput()
+		if len(words) == 0 {
+			continue
+		}
+		switch words[0] {
+		case "move":
+			_, err := gs.CommandMove(words)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
 
-	fmt.Println("Shutdown signal received. Closing connection...")
+			// TODO: publish the move
+		case "spawn":
+			err = gs.CommandSpawn(words)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+		case "status":
+			gs.CommandStatus()
+		case "help":
+			gamelogic.PrintClientHelp()
+		case "spam":
+			// TODO: publish n malicious logs
+			fmt.Println("Spamming not allowed yet!")
+		case "quit":
+			gamelogic.PrintQuit()
+			return
+		default:
+			fmt.Println("unknown command")
+		}
+	}
 }
