@@ -39,6 +39,20 @@ func main() {
 	defer ch.Close()
 	fmt.Println("Successfully opened a channel")
 
+	// Declare and bind a durable queue for game logs
+	_, gameLogsQueue, err := pubsub.DeclareAndBind(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug,
+		pubsub.QueueDurable,
+	)
+	if err != nil {
+		fmt.Printf("Failed to declare and bind queue for game logs: %v\n", err)
+		return
+	}
+	fmt.Printf("Successfully declared durable queue '%s' for game logs\n", gameLogsQueue.Name)
+
 	// Create a PlayingState message with paused set to true
 	pauseMessage := routing.PlayingState{
 		IsPaused: true,
