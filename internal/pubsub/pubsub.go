@@ -93,3 +93,59 @@ func DeclareAndBind(
 
 	return ch, q, nil
 }
+
+// SubscribeJSON subscribes to messages from a queue, unmarshals them into the specified type,
+// and processes them with the provided handler function.
+func SubscribeJSON[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	simpleQueueType int,
+	handler func(T),
+) error {
+	// Call DeclareAndBind to ensure the queue exists and is bound to the exchange
+	ch, q, err := DeclareAndBind(conn, exchange, queueName, key, simpleQueueType)
+	if err != nil {
+		return fmt.Errorf("failed to declare and bind queue: %w", err)
+	}
+
+	// Get a channel of delivery messages
+	msgs, err := ch.Consume(
+		q.Name, // queue name
+		"",     // consumer name (auto-generated)
+		false,  // auto-ack
+		false,  // exclusive
+		false,  // no-local
+		false,  // no-wait
+		nil,    // arguments
+	)
+	if err != nil {
+		ch.Close() // Close channel on error
+		return fmt.Errorf("failed to register a consumer: %w", err)
+	}
+
+	// Start a goroutine to process messages
+	go func() {
+		defer ch.Close() // Ensure channel is closed when goroutine exits
+
+		for d := range msgs {
+			// Unmarshal the message body into type T
+			var msg T
+			err := json.Unmarshal(d.Body, &msg)
+			if err != nil {
+				fmt.Printf("Error unmarshaling message: %v\n", err)
+				d.Ack(false) // Acknowledge even failed messages to remove from queue
+				continue
+			}
+
+			// Call the handler with the unmarshaled message
+			handler(msg)
+
+			// Acknowledge the message
+			d.Ack(false)
+		}
+	}()
+
+	return nil
+}
